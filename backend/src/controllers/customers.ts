@@ -1,12 +1,29 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery } from 'mongoose'
+import { PAGINATION } from '../config'
 import NotFoundError from '../errors/not-found-error'
 import Order from '../models/order'
 import User, { IUser } from '../models/user'
+import escapeRegExp from '../utils/escapeRegExp'
 
-// TODO: Добавить guard admin
-// eslint-disable-next-line max-len
-// Get GET /customers?page=2&limit=5&sort=totalAmount&order=desc&registrationDateFrom=2023-01-01&registrationDateTo=2023-12-31&lastOrderDateFrom=2023-01-01&lastOrderDateTo=2023-12-31&totalAmountFrom=100&totalAmountTo=1000&orderCountFrom=1&orderCountTo=10
+const normalizePagination = (query: Request['query']) => {
+    const page = Math.min(
+        Math.max(Math.trunc(Number(query.page)) || 1, 1),
+        PAGINATION.maxPage
+    )
+    const limit = Math.min(
+        Math.max(Math.trunc(Number(query.limit)) || PAGINATION.defaultLimit, 1),
+        PAGINATION.maxLimit
+    )
+    return { page, limit, skip: (page - 1) * limit }
+}
+
+const endOfDay = (value: unknown) => {
+    const date = new Date(String(value))
+    date.setHours(23, 59, 59, 999)
+    return date
+}
+
 export const getCustomers = async (
     req: Request,
     res: Response,
@@ -14,8 +31,6 @@ export const getCustomers = async (
 ) => {
     try {
         const {
-            page = 1,
-            limit = 10,
             sortField = 'createdAt',
             sortOrder = 'desc',
             registrationDateFrom,
@@ -28,38 +43,35 @@ export const getCustomers = async (
             orderCountTo,
             search,
         } = req.query
+        const { page, limit, skip } = normalizePagination(req.query)
 
         const filters: FilterQuery<Partial<IUser>> = {}
 
         if (registrationDateFrom) {
             filters.createdAt = {
                 ...filters.createdAt,
-                $gte: new Date(registrationDateFrom as string),
+                $gte: new Date(String(registrationDateFrom)),
             }
         }
 
         if (registrationDateTo) {
-            const endOfDay = new Date(registrationDateTo as string)
-            endOfDay.setHours(23, 59, 59, 999)
             filters.createdAt = {
                 ...filters.createdAt,
-                $lte: endOfDay,
+                $lte: endOfDay(registrationDateTo),
             }
         }
 
         if (lastOrderDateFrom) {
             filters.lastOrderDate = {
                 ...filters.lastOrderDate,
-                $gte: new Date(lastOrderDateFrom as string),
+                $gte: new Date(String(lastOrderDateFrom)),
             }
         }
 
         if (lastOrderDateTo) {
-            const endOfDay = new Date(lastOrderDateTo as string)
-            endOfDay.setHours(23, 59, 59, 999)
             filters.lastOrderDate = {
                 ...filters.lastOrderDate,
-                $lte: endOfDay,
+                $lte: endOfDay(lastOrderDateTo),
             }
         }
 
@@ -92,99 +104,88 @@ export const getCustomers = async (
         }
 
         if (search) {
-            const searchRegex = new RegExp(search as string, 'i')
+            // Строка поиска экранируется, иначе она интерпретируется
+            // как регулярное выражение и роняет запрос или вешает сервер
+            const searchRegex = new RegExp(escapeRegExp(String(search)), 'i')
             const orders = await Order.find(
-                {
-                    $or: [{ deliveryAddress: searchRegex }],
-                },
+                { deliveryAddress: searchRegex },
                 '_id'
             )
 
-            const orderIds = orders.map((order) => order._id)
-
             filters.$or = [
                 { name: searchRegex },
-                { lastOrder: { $in: orderIds } },
+                { lastOrder: { $in: orders.map((order) => order._id) } },
             ]
         }
 
-        const sort: { [key: string]: any } = {}
-
-        if (sortField && sortOrder) {
-            sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
-        }
-
         const options = {
-            sort,
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+            sort: { [String(sortField)]: sortOrder === 'desc' ? -1 : 1 },
+            skip,
+            limit,
         }
 
         const users = await User.find(filters, null, options).populate([
             'orders',
             {
                 path: 'lastOrder',
-                populate: {
-                    path: 'products',
-                },
-            },
-            {
-                path: 'lastOrder',
-                populate: {
-                    path: 'customer',
-                },
+                populate: { path: 'products' },
             },
         ])
 
         const totalUsers = await User.countDocuments(filters)
-        const totalPages = Math.ceil(totalUsers / Number(limit))
 
-        res.status(200).json({
+        return res.status(200).json({
             customers: users,
             pagination: {
                 totalUsers,
-                totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                totalPages: Math.ceil(totalUsers / limit),
+                currentPage: page,
+                pageSize: limit,
             },
         })
     } catch (error) {
-        next(error)
+        return next(error)
     }
 }
 
-// TODO: Добавить guard admin
-// Get /customers/:id
 export const getCustomerById = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
-        const user = await User.findById(req.params.id).populate([
-            'orders',
-            'lastOrder',
-        ])
-        res.status(200).json(user)
+        const user = await User.findById(req.params.id)
+            .populate(['orders', 'lastOrder'])
+            .orFail(
+                () =>
+                    new NotFoundError(
+                        'Пользователь по заданному id отсутствует в базе'
+                    )
+            )
+        return res.status(200).json(user)
     } catch (error) {
-        next(error)
+        return next(error)
     }
 }
 
-// TODO: Добавить guard admin
-// Patch /customers/:id
 export const updateCustomer = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
+        // Поля пришли из белого списка валидатора: роли и токены изменить нельзя
+        const { name, email, phone } = req.body
         const updatedUser = await User.findByIdAndUpdate(
             req.params.id,
-            req.body,
             {
-                new: true,
-            }
+                $set: {
+                    ...(name && { name }),
+                    ...(email && { email }),
+                    ...(phone && { phone }),
+                },
+            },
+            { new: true, runValidators: true }
         )
             .orFail(
                 () =>
@@ -193,14 +194,12 @@ export const updateCustomer = async (
                     )
             )
             .populate(['orders', 'lastOrder'])
-        res.status(200).json(updatedUser)
+        return res.status(200).json(updatedUser)
     } catch (error) {
-        next(error)
+        return next(error)
     }
 }
 
-// TODO: Добавить guard admin
-// Delete /customers/:id
 export const deleteCustomer = async (
     req: Request,
     res: Response,
@@ -213,8 +212,8 @@ export const deleteCustomer = async (
                     'Пользователь по заданному id отсутствует в базе'
                 )
         )
-        res.status(200).json(deletedUser)
+        return res.status(200).json(deletedUser)
     } catch (error) {
-        next(error)
+        return next(error)
     }
 }

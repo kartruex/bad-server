@@ -3,40 +3,43 @@ import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import 'dotenv/config'
 import express, { json, urlencoded } from 'express'
+import helmet from 'helmet'
 import mongoose from 'mongoose'
 import path from 'path'
-import { DB_ADDRESS } from './config'
+import { BODY_LIMIT, DB_ADDRESS, ORIGIN_ALLOW, PORT } from './config'
 import errorHandler from './middlewares/error-handler'
+import rateLimiter from './middlewares/rate-limiter'
 import serveStatic from './middlewares/serverStatic'
 import routes from './routes'
 
-const { PORT = 3000 } = process.env
 const app = express()
 
+// За nginx: доверяем одному прокси, иначе rate limiter видит один и тот же IP
+app.set('trust proxy', 1)
+app.disable('x-powered-by')
+
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
+app.use(cors({ origin: ORIGIN_ALLOW, credentials: true }))
 app.use(cookieParser())
 
-app.use(cors())
-// app.use(cors({ origin: ORIGIN_ALLOW, credentials: true }));
-// app.use(express.static(path.join(__dirname, 'public')));
-
+// Статика отдаётся до лимитера: картинки товаров кешируются и не расходуют лимит
 app.use(serveStatic(path.join(__dirname, 'public')))
 
-app.use(urlencoded({ extended: true }))
-app.use(json())
+app.use(rateLimiter)
+app.use(urlencoded({ extended: false, limit: BODY_LIMIT }))
+app.use(json({ limit: BODY_LIMIT }))
 
-app.options('*', cors())
 app.use(routes)
 app.use(errors())
 app.use(errorHandler)
 
-// eslint-disable-next-line no-console
-
 const bootstrap = async () => {
     try {
         await mongoose.connect(DB_ADDRESS)
-        await app.listen(PORT, () => console.log('ok'))
+        app.listen(PORT)
     } catch (error) {
-        console.error(error)
+        process.exitCode = 1
+        throw error
     }
 }
 

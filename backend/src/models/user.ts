@@ -1,9 +1,9 @@
 /* eslint-disable no-param-reassign */
+import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
 import jwt from 'jsonwebtoken'
 import mongoose, { Document, HydratedDocument, Model, Types } from 'mongoose'
 import validator from 'validator'
-import md5 from 'md5'
 
 import { ACCESS_TOKEN, REFRESH_TOKEN } from '../config'
 import UnauthorizedError from '../errors/unauthorized-error'
@@ -106,7 +106,13 @@ const userSchema = new mongoose.Schema<IUser, IUserModel, IUserMethods>(
         toJSON: {
             virtuals: true,
             transform: (_doc, ret) => {
-                const { tokens: _tokens, password: _password, _id, roles: _roles, ...rest } = ret
+                const {
+                    tokens: _tokens,
+                    password: _password,
+                    _id,
+                    roles: _roles,
+                    ...rest
+                } = ret
                 return rest
             },
         },
@@ -114,10 +120,13 @@ const userSchema = new mongoose.Schema<IUser, IUserModel, IUserMethods>(
 )
 
 // Возможно добавление хеша в контроллере регистрации
+// md5 без соли подбирается по радужным таблицам: используем bcrypt
+const SALT_ROUNDS = 10
+
 userSchema.pre('save', async function hashingPassword(next) {
     try {
         if (this.isModified('password')) {
-            this.password = md5(this.password)
+            this.password = await bcrypt.hash(this.password, SALT_ROUNDS)
         }
         next()
     } catch (error) {
@@ -175,10 +184,12 @@ userSchema.statics.findUserByCredentials = async function findByCredentials(
     email: string,
     password: string
 ) {
-    const user = await this.findOne({ email })
+    // email приводится к строке: объект вида {$gt: ""} иначе стал бы
+    // оператором MongoDB и вернул первого попавшегося пользователя
+    const user = await this.findOne({ email: String(email) })
         .select('+password')
         .orFail(() => new UnauthorizedError('Неправильные почта или пароль'))
-    const passwdMatch = md5(password) === user.password
+    const passwdMatch = await bcrypt.compare(String(password), user.password)
     if (!passwdMatch) {
         return Promise.reject(
             new UnauthorizedError('Неправильные почта или пароль')
