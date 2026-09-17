@@ -33,14 +33,23 @@ app.use(routes)
 app.use(errors())
 app.use(errorHandler)
 
-const bootstrap = async () => {
+const RECONNECT_DELAY_MS = 3000
+
+// База может быть ещё не поднята: процесс ждёт её, а не падает
+const connectToDatabase = async (): Promise<void> => {
     try {
         await mongoose.connect(DB_ADDRESS)
-        app.listen(PORT)
-    } catch (error) {
-        process.exitCode = 1
-        throw error
+    } catch {
+        await new Promise((resolve) => {
+            setTimeout(resolve, RECONNECT_DELAY_MS)
+        })
+        await connectToDatabase()
     }
+}
+
+const bootstrap = async () => {
+    await connectToDatabase()
+    app.listen(PORT)
 }
 
 bootstrap()
