@@ -53,12 +53,55 @@ class Api {
                   )
     }
 
-    protected async request<T>(endpoint: string, options: RequestInit) {
+    private csrfToken: string | null = null
+
+    private static readonly safeMethods = ['GET', 'HEAD', 'OPTIONS']
+
+    private fetchCsrfToken = async (): Promise<string> => {
+        const res = await fetch(`${this.baseUrl}/auth/csrf-token`, {
+            method: 'GET',
+            credentials: 'include',
+        })
+        const { csrfToken } = await this.handleResponse<{ csrfToken: string }>(
+            res
+        )
+        this.csrfToken = csrfToken
+        return csrfToken
+    }
+
+    protected async request<T>(
+        endpoint: string,
+        options: RequestInit,
+        retryCsrf = true
+    ): Promise<T> {
+        const method = (options.method ?? 'GET').toUpperCase()
+        const needsCsrf = !Api.safeMethods.includes(method)
+
         try {
+            const headers: Record<string, string> = {
+                ...((this.options.headers as Record<string, string>) ?? {}),
+                ...((options.headers as Record<string, string>) ?? {}),
+            }
+
+            if (needsCsrf) {
+                headers['X-CSRF-Token'] =
+                    this.csrfToken ?? (await this.fetchCsrfToken())
+            }
+
             const res = await fetch(`${this.baseUrl}${endpoint}`, {
-                ...this.options,
                 ...options,
+                headers,
+                credentials: needsCsrf ? 'include' : options.credentials,
             })
+
+            // Токен привязан к cookie и живёт ограниченное время:
+            // один раз пробуем получить новый и повторить запрос
+            if (res.status === 403 && needsCsrf && retryCsrf) {
+                this.csrfToken = null
+                await this.fetchCsrfToken()
+                return await this.request<T>(endpoint, options, false)
+            }
+
             return await this.handleResponse<T>(res)
         } catch (error) {
             return Promise.reject(error)
@@ -299,7 +342,6 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
     }
 
     createProduct = (data: Omit<IProduct, '_id'>) => {
-        console.log(data)
         return this.requestWithRefresh<IProduct>('/product', {
             method: 'POST',
             body: JSON.stringify(data),

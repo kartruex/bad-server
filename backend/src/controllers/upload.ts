@@ -1,6 +1,14 @@
 import { NextFunction, Request, Response } from 'express'
+import { unlink } from 'fs/promises'
 import { constants } from 'http2'
+import sharp from 'sharp'
+import { UPLOAD } from '../config'
 import BadRequestError from '../errors/bad-request-error'
+import { ALLOWED_IMAGE_FORMATS } from '../middlewares/file'
+
+const removeFile = async (filePath: string) => {
+    await unlink(filePath).catch(() => undefined)
+}
 
 export const uploadFile = async (
     req: Request,
@@ -10,17 +18,39 @@ export const uploadFile = async (
     if (!req.file) {
         return next(new BadRequestError('Файл не загружен'))
     }
+
+    const { file } = req
+
     try {
-        const fileName = process.env.UPLOAD_PATH
-            ? `/${process.env.UPLOAD_PATH}/${req.file.filename}`
-            : `/${req.file?.filename}`
+        if (file.size < UPLOAD.minFileSize) {
+            await removeFile(file.path)
+            return next(
+                new BadRequestError(
+                    `Файл меньше допустимого размера (${UPLOAD.minFileSize} байт)`
+                )
+            )
+        }
+
+        // Расширение и MIME-тип подделываются, поэтому проверяем содержимое файла
+        const metadata = await sharp(file.path).metadata()
+        if (
+            !metadata.format ||
+            !ALLOWED_IMAGE_FORMATS.includes(metadata.format) ||
+            !metadata.width ||
+            !metadata.height
+        ) {
+            await removeFile(file.path)
+            return next(new BadRequestError('Загруженный файл не изображение'))
+        }
+
         return res.status(constants.HTTP_STATUS_CREATED).send({
-            fileName,
-            originalName: req.file?.originalname,
+            fileName: `/${UPLOAD.path}/${file.filename}`,
+            originalName: file.originalname,
         })
-    } catch (error) {
-        return next(error)
+    } catch {
+        await removeFile(file.path)
+        return next(new BadRequestError('Загруженный файл не изображение'))
     }
 }
 
-export default {}
+export default uploadFile

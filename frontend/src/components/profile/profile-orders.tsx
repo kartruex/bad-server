@@ -99,6 +99,7 @@ export default function ProfileOrders() {
             })
             setSearchParams({ ...filters, search: value })
         },
+        // eslint-disable-next-line react-hooks/exhaustive-deps
         [searchParams, dispatch, setSearchParams]
     )
 

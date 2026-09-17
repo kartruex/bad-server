@@ -7,6 +7,7 @@ import Form, { Input } from '../form'
 import useFormWithValidation from '../form/hooks/useFormWithValidation'
 import Select from '../select'
 import styles from './filter.module.scss'
+import { FilterValue } from '../admin/helpers/types'
 import { FieldOption } from './helpers/types'
 
 interface Field {
@@ -20,8 +21,7 @@ interface FilterSelectedState {
 }
 interface FilterComponentProps {
     fields: Field[]
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    onFilter: (filters: Record<string, any>) => void
+    onFilter: (filters: Record<string, FilterValue>) => void
     onClear: () => void
     defaultValue?: FiltersOrder | FiltersCustomers
 }
@@ -114,6 +114,7 @@ const Filter = ({
                 setSelects({ ...selects, status })
             }
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [defaultValue])
 
     return (

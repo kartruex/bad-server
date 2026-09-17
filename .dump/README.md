@@ -8,6 +8,8 @@
 - login: `user1@mail.ru`
 - password: `password1`
 
+Пароли в дампе пересозданы под bcrypt после отказа от md5.
+
 # How to restore database
 1. Через MongoDB Compass подключаемся к базе по адресу:
 ```

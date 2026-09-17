@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from 'express'
 import { constants } from 'http2'
 import { Error as MongooseError } from 'mongoose'
 import { join } from 'path'
+import { PAGINATION, UPLOAD } from '../config'
 import BadRequestError from '../errors/bad-request-error'
 import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
@@ -11,21 +12,31 @@ import movingFile from '../utils/movingFile'
 // GET /product
 const getProducts = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { page = 1, limit = 5 } = req.query
-        const options = {
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
-        }
-        const products = await Product.find({}, null, options)
+        const page = Math.min(
+            Math.max(Math.trunc(Number(req.query.page)) || 1, 1),
+            PAGINATION.maxPage
+        )
+        const limit = Math.min(
+            Math.max(
+                Math.trunc(Number(req.query.limit)) || PAGINATION.defaultLimit,
+                1
+            ),
+            PAGINATION.maxLimit
+        )
+        const products = await Product.find({}, null, {
+            skip: (page - 1) * limit,
+            limit,
+        })
         const totalProducts = await Product.countDocuments({})
-        const totalPages = Math.ceil(totalProducts / Number(limit))
+        // Каталог одинаков для всех, поэтому его можно отдавать из кеша
+        res.set('Cache-Control', 'public, max-age=60')
         return res.send({
             items: products,
             pagination: {
                 totalProducts,
-                totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                totalPages: Math.ceil(totalProducts / limit),
+                currentPage: page,
+                pageSize: limit,
             },
         })
     } catch (err) {
@@ -46,8 +57,8 @@ const createProduct = async (
         if (image) {
             movingFile(
                 image.fileName,
-                join(__dirname, `../public/${process.env.UPLOAD_PATH_TEMP}`),
-                join(__dirname, `../public/${process.env.UPLOAD_PATH}`)
+                join(__dirname, `../public/${UPLOAD.tempPath}`),
+                join(__dirname, `../public/${UPLOAD.path}`)
             )
         }
 
@@ -72,7 +83,6 @@ const createProduct = async (
     }
 }
 
-// TODO: Добавить guard admin
 // PUT /product
 const updateProduct = async (
     req: Request,
@@ -87,8 +97,8 @@ const updateProduct = async (
         if (image) {
             movingFile(
                 image.fileName,
-                join(__dirname, `../public/${process.env.UPLOAD_PATH_TEMP}`),
-                join(__dirname, `../public/${process.env.UPLOAD_PATH}`)
+                join(__dirname, `../public/${UPLOAD.tempPath}`),
+                join(__dirname, `../public/${UPLOAD.path}`)
             )
         }
 
@@ -120,7 +130,6 @@ const updateProduct = async (
     }
 }
 
-// TODO: Добавить guard admin
 // DELETE /product
 const deleteProduct = async (
     req: Request,

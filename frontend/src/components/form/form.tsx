@@ -25,13 +25,20 @@ export default function Form({
     formRef,
     ...props
 }: FormProps) {
+    // Отправку формы всегда обрабатывает приложение: нативный submit
+    // перезагружает страницу и теряет состояние роутера
+    const onSubmit = (event: SyntheticEvent<HTMLFormElement>) => {
+        event.preventDefault()
+        handleFormSubmit?.(event)
+    }
+
     return (
         <form
             ref={formRef}
             className={clsx(styles.form, {
                 [extraClass as string]: !!extraClass,
             })}
-            onSubmit={handleFormSubmit}
+            onSubmit={onSubmit}
             {...props}
         >
             {children}

@@ -13,18 +13,22 @@ const auth = async (req: Request, res: Response, next: NextFunction) => {
     let payload: JwtPayload | null = null
     const authHeader = req.header('Authorization')
     if (!authHeader?.startsWith('Bearer ')) {
-        throw new UnauthorizedError('Невалидный токен')
+        return next(new UnauthorizedError('Невалидный токен'))
     }
     try {
         const accessTokenParts = authHeader.split(' ')
         const aTkn = accessTokenParts[1]
         payload = jwt.verify(aTkn, ACCESS_TOKEN.secret) as JwtPayload
 
+        // Идентификатор из токена приводится к ObjectId, иначе объект
+        // в поле sub попал бы в запрос как оператор MongoDB
+        if (!Types.ObjectId.isValid(String(payload.sub))) {
+            return next(new UnauthorizedError('Невалидный токен'))
+        }
+
         const user = await UserModel.findOne(
-            {
-                _id: new Types.ObjectId(payload.sub),
-            },
-            { password: 0, salt: 0 }
+            { _id: new Types.ObjectId(String(payload.sub)) },
+            { password: 0, tokens: 0 }
         )
 
         if (!user) {

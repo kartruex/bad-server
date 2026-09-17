@@ -1,10 +1,24 @@
-import { Request, Express } from 'express'
-import multer, { FileFilterCallback } from 'multer'
+import { randomUUID } from 'crypto'
+import { Express, Request } from 'express'
 import { mkdirSync } from 'fs'
-import { join } from 'path'
+import multer, { FileFilterCallback } from 'multer'
+import { extname, join } from 'path'
+import { UPLOAD } from '../config'
 
 type DestinationCallback = (error: Error | null, destination: string) => void
 type FileNameCallback = (error: Error | null, filename: string) => void
+
+// Расширение берём из таблицы разрешённых типов, а не из имени файла пользователя
+const ALLOWED_TYPES: Record<string, string> = {
+    'image/png': '.png',
+    'image/jpg': '.jpg',
+    'image/jpeg': '.jpeg',
+    'image/gif': '.gif',
+}
+
+export const ALLOWED_IMAGE_FORMATS = ['png', 'jpg', 'jpeg', 'gif']
+
+const uploadDir = join(__dirname, `../public/${UPLOAD.tempPath}`)
 
 const storage = multer.diskStorage({
     destination: (
@@ -12,16 +26,8 @@ const storage = multer.diskStorage({
         _file: Express.Multer.File,
         cb: DestinationCallback
     ) => {
-        const destinationPath = join(
-            __dirname,
-            process.env.UPLOAD_PATH_TEMP
-                ? `../public/${process.env.UPLOAD_PATH_TEMP}`
-                : '../public'
-        )
-
-        mkdirSync(destinationPath, { recursive: true })
-
-        cb(null, destinationPath)
+        mkdirSync(uploadDir, { recursive: true })
+        cb(null, uploadDir)
     },
 
     filename: (
@@ -29,28 +35,27 @@ const storage = multer.diskStorage({
         file: Express.Multer.File,
         cb: FileNameCallback
     ) => {
-        cb(null, file.originalname)
+        const ext =
+            ALLOWED_TYPES[file.mimetype] ??
+            extname(file.originalname).toLowerCase()
+        cb(null, `${randomUUID()}${ext}`)
     },
 })
-
-const types = [
-    'image/png',
-    'image/jpg',
-    'image/jpeg',
-    'image/gif',
-    'image/svg+xml',
-]
 
 const fileFilter = (
     _req: Request,
     file: Express.Multer.File,
     cb: FileFilterCallback
-) => {
-    if (!types.includes(file.mimetype)) {
-        return cb(null, false)
-    }
+) => cb(null, file.mimetype in ALLOWED_TYPES)
 
-    return cb(null, true)
-}
-
-export default multer({ storage, fileFilter })
+export default multer({
+    storage,
+    fileFilter,
+    limits: {
+        fileSize: UPLOAD.maxFileSize,
+        files: 1,
+        fields: 10,
+        fieldNameSize: 100,
+        fieldSize: 1024,
+    },
+})
